@@ -17,7 +17,7 @@ td,th{padding:5px 3px;text-align:left;border-bottom:1px solid var(--line)}th{col
 button{background:var(--b);color:#fff;border:0;border-radius:10px;padding:8px 14px;font-weight:600}
 .warn{font-size:12px;color:var(--y);margin-top:6px}
 </style></head><body>
-<div class="top"><h1>EMA Desk · All markets · 5M</h1><span id="mode" class="pill demo">DEMO DATA</span></div>
+<div class="top"><h1>EMA Desk · All markets · 5M</h1><span id="mode" class="pill demo">CONNECTING</span></div>
 <div class="row">
  <div class="card"><div class="lbl">Price</div><div class="big" id="px">–</div></div>
  <div class="card"><div class="lbl">Paper balance</div><div class="big" id="bal">–</div></div>
@@ -25,85 +25,49 @@ button{background:var(--b);color:#fff;border:0;border-radius:10px;padding:8px 14
 <div class="card"><div class="lbl">Chart</div><div class="sig wait" id="sig">WAIT</div><div id="why" style="color:var(--mu);margin-top:4px">Scanning markets…</div></div>
 <div class="card"><canvas id="cv"></canvas>
  <div class="leg"><span style="color:#facc15">● EMA 5</span><span style="color:#38bdf8">● EMA 13</span><span style="color:#f472b6">● EMA 89</span></div></div>
-<div class="card"><div class="lbl">Open positions</div><div id="pos">None</div></div><div class="card"><div class="lbl">Scanner (tap a market)</div><div id="scan" style="max-height:260px;overflow:auto"></div><div id="prog" style="color:var(--mu);font-size:12px;margin-top:6px"></div></div>
+<div class="card"><div class="lbl">Open positions</div><div id="pos">None</div></div><div class="card"><div class="lbl">Scanner (tap a market)</div><div id="scan" style="max-height:260px;overflow:auto"></div><div id="upd" style="color:var(--mu);font-size:12px;margin-top:6px"></div></div>
 <div class="card"><div class="lbl">Fills</div><table><thead><tr><th>Market</th><th>Side</th><th>Entry</th><th>Exit</th><th>P/L</th></tr></thead><tbody id="fills"></tbody></table>
  <div style="margin-top:8px"><button onclick="resetDesk()">Reset paper account</button></div>
  <div class="warn">Paper money only. This desk never places real orders.</div></div>
 <script>
-const START=10000,RISK=0.01,FLAT=0.0003,MAXPOS=5,BATCH=4;
-let S=load(),M=[],R={},sel=null,live=false,busy=false;
-function load(){try{const s=JSON.parse(localStorage.getItem("marketDesk"));if(s)return s}catch(e){}return{bal:START,pos:{},fills:[],last:{}}}
-function save(){try{localStorage.setItem("marketDesk",JSON.stringify(S))}catch(e){}}
-function resetDesk(){S={bal:START,pos:{},fills:[],last:{}};save();render()}
+let S=null,sel=null,CS=[];
 const esc=t=>String(t).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-const f=n=>n>=100?n.toFixed(2):n.toFixed(5);const f2=n=>n.toFixed(2);
+const f=n=>n>=100?n.toFixed(2):n.toFixed(5),f2=n=>n.toFixed(2);
 function ema(v,n){const k=2/(n+1);let e=v[0];return v.map((x,i)=>i?e=x*k+e*(1-k):e)}
-function demoCandles(){let p=50+Math.random()*3000,t=Math.floor(Date.now()/3e5)*3e5-299*3e5,a=[],vol=p*0.0004;
- for(let i=0;i<300;i++){const o=p,c=o+(Math.random()-.48)*vol;a.push({t,o,h:Math.max(o,c)+Math.random()*vol/2,l:Math.min(o,c)-Math.random()*vol/2,c});p=c;t+=3e5}return a}
-async function getMarkets(){
- try{const r=await fetch("/api/markets");if(!r.ok)throw 0;const d=await r.json(),a=(Array.isArray(d)?d:(d.markets||[])).filter(x=>x.symbol&&x.open!==false);
-  if(!a.length)throw 0;live=true;return a.map(x=>({symbol:x.symbol,cls:x.class||""}))}
- catch(e){live=false;return["XAUUSD","BTCUSD","EURUSD"].map(s=>({symbol:s,cls:"demo"}))}}
-async function getCandles(sym){
- if(!live)return demoCandles();
- const r=await fetch("/api/candles?symbol="+encodeURIComponent(sym)+"&interval=5m&limit=300");if(!r.ok)throw 0;
- const d=await r.json(),a=(d.candles||[]).map(x=>({t:+x.t,o:+x.o,h:+x.h,l:+x.l,c:+x.c})).filter(x=>x.c);if(a.length<100)throw 0;return a}
-function closePos(sym,price,why){const p=S.pos[sym],d=p.side=="LONG"?1:-1,pl=(price-p.entry)*d*p.u;
- S.bal+=pl;S.fills.unshift({sym,side:p.side,entry:p.entry,exit:price,pl,why});S.fills=S.fills.slice(0,40);delete S.pos[sym]}
-function think(sym,cs){
- const done=cs.slice(0,-1),cl=done.map(x=>x.c),n=cl.length-1,cur=cs[cs.length-1],px=cur.c;
- const e5=ema(cl,5),e13=ema(cl,13),e89=ema(cl,89),c=done[n],o={sig:"WAIT",why:"Tangled around the 89 – no trade",px,cs,e5,e13,e89};
- const up=e5[n]>e89[n]&&e13[n]>e89[n],dn=e5[n]<e89[n]&&e13[n]<e89[n],flat=Math.abs(e13[n]-e89[n])<FLAT*c.c;
- const body=Math.abs(c.c-c.o)/(c.h-c.l||1)>0.5;
- const cross=e5[n-1]<=e13[n-1]&&e5[n]>e13[n],crossDn=e5[n-1]>=e13[n-1]&&e5[n]<e13[n];
- let pu=false,pd=false;for(let i=n-10;i<n;i++){if(e5[i]<=e13[i])pu=true;if(e5[i]>=e13[i])pd=true}
- const sw=done.slice(-10),newC=S.last[sym]!==c.t;let p=S.pos[sym];
- if(live&&p){
-  if(p.side=="LONG"&&cur.l<=p.stop)closePos(sym,p.stop,"stop");
-  else if(p.side=="SHORT"&&cur.h>=p.stop)closePos(sym,p.stop,"stop");
-  else if(newC){if(p.side=="LONG"&&e5[n]<e89[n]&&e13[n]<e89[n])closePos(sym,px,"trend broke");
-   else if(p.side=="SHORT"&&e5[n]>e89[n]&&e13[n]>e89[n])closePos(sym,px,"trend broke")}}
- if(!flat&&up){o.sig="LONG TREND";o.why="5 & 13 above 89. Waiting for pullback then 5 crossing up over 13."}
- else if(!flat&&dn){o.sig="SHORT TREND";o.why="5 & 13 below 89. Waiting for pullback then 5 crossing down under 13."}
- if(live&&!S.pos[sym]&&newC&&Object.keys(S.pos).length<MAXPOS){
-  const mk=(side,stop)=>{const d=Math.abs(px-stop);if(!(d>0))return;let u=S.bal*RISK/d;u=Math.min(u,S.bal*2/px);
-   S.pos[sym]={side,entry:px,stop,u,t:c.t};o.sig=side;o.why="Entry taken on closed candle"};
-  if(!flat&&up&&pu&&cross&&c.c>c.o&&body)mk("LONG",Math.min(e89[n],...sw.map(x=>x.l)));
-  if(!flat&&dn&&pd&&crossDn&&c.c<c.o&&body)mk("SHORT",Math.max(e89[n],...sw.map(x=>x.h)));
- }
- if(S.pos[sym]&&!o.sig.match(/^(LONG|SHORT)$/))o.sig=S.pos[sym].side+" (open)";
- if(live){S.last[sym]=c.t;save()}else o.why+=" (demo data: no paper trades)";return o}
-async function scan(){if(busy)return;busy=true;
- try{M=await getMarkets();if(!sel||!M.find(m=>m.symbol==sel))sel=M[0].symbol;
-  const m=document.getElementById("mode");m.textContent=live?"LIVE · VEMBIT":"DEMO DATA";m.className="pill "+(live?"live":"demo");
-  for(let i=0;i<M.length;i+=BATCH){
-   await Promise.all(M.slice(i,i+BATCH).map(async x=>{try{R[x.symbol]=think(x.symbol,await getCandles(x.symbol))}catch(e){R[x.symbol]={sig:"NO DATA",why:"Could not load candles",px:0}}}));
-   document.getElementById("prog").textContent=`Scanned ${Math.min(i+BATCH,M.length)} of ${M.length}`;render()}
- }finally{busy=false;setTimeout(scan,30000)}}
-function cls(s){return s.startsWith("LONG")||s=="BUY"?"up":s.startsWith("SHORT")?"dn":"wait"}
+function cls(s){return s.startsWith("LONG")?"up":s.startsWith("SHORT")?"dn":"wait"}
 function rank(s){return s=="LONG"||s=="SHORT"?0:s.includes("open")?1:s.includes("TREND")?2:3}
-function draw(){const r=R[sel];const cv=document.getElementById("cv"),dpr=devicePixelRatio||1,W=cv.clientWidth,H=cv.clientHeight;
- cv.width=W*dpr;cv.height=H*dpr;const g=cv.getContext("2d");g.scale(dpr,dpr);if(!r||!r.cs)return;
- const N=100,candles=r.cs,v=candles.slice(-N),off=candles.length-v.length;
+async function loadState(){try{const r=await fetch("/api/state");if(!r.ok)throw 0;S=await r.json()}catch(e){S=null}render()}
+async function loadChart(){if(!sel)return;const sym=sel;try{const r=await fetch("/api/candles?symbol="+encodeURIComponent(sym)+"&interval=5m&limit=300");const d=await r.json();
+ const a=(d.candles||[]).map(x=>({t:+x.t,o:+x.o,h:+x.h,l:+x.l,c:+x.c})).filter(x=>x.c);if(sym==sel){CS=a;draw()}}catch(e){}}
+async function resetDesk(){const k=prompt("Enter your CRON_SECRET to reset the paper account");if(!k)return;
+ const r=await fetch("/api/state?reset=1&secret="+encodeURIComponent(k));alert(r.ok?"Reset done":"Wrong secret");loadState()}
+function draw(){const cv=document.getElementById("cv"),dpr=devicePixelRatio||1,W=cv.clientWidth,H=cv.clientHeight;
+ cv.width=W*dpr;cv.height=H*dpr;const g=cv.getContext("2d");g.scale(dpr,dpr);if(CS.length<100)return;
+ const cl=CS.map(x=>x.c),E=[[ema(cl,5),"#facc15"],[ema(cl,13),"#38bdf8"],[ema(cl,89),"#f472b6"]];
+ const N=100,v=CS.slice(-N),off=CS.length-v.length;
  const lo=Math.min(...v.map(x=>x.l)),hi=Math.max(...v.map(x=>x.h)),pad=(hi-lo)*.05,L=lo-pad,Hh=hi+pad;
  const X=i=>(i+.5)*W/N,Y=p=>H-(p-L)/(Hh-L)*H,w=Math.max(1,W/N*.6);
  v.forEach((x,i)=>{g.strokeStyle=g.fillStyle=x.c>=x.o?"#22c55e":"#ef4444";g.beginPath();g.moveTo(X(i),Y(x.h));g.lineTo(X(i),Y(x.l));g.stroke();
   g.fillRect(X(i)-w/2,Y(Math.max(x.o,x.c)),w,Math.max(1,Math.abs(Y(x.o)-Y(x.c))))});
- [[r.e5,"#facc15"],[r.e13,"#38bdf8"],[r.e89,"#f472b6"]].forEach(([a,col])=>{g.strokeStyle=col;g.lineWidth=1.5;g.beginPath();let first=1;
+ E.forEach(([a,col])=>{g.strokeStyle=col;g.lineWidth=1.5;g.beginPath();let first=1;
   a.forEach((y,i)=>{const j=i-off;if(j<0||j>=v.length)return;first?(g.moveTo(X(j),Y(y)),first=0):g.lineTo(X(j),Y(y))});g.stroke()});g.lineWidth=1;
- const p=S.pos[sel];if(p){g.strokeStyle="#ef4444";g.setLineDash([4,4]);g.beginPath();g.moveTo(0,Y(p.stop));g.lineTo(W,Y(p.stop));g.stroke();g.setLineDash([])}}
-function render(){
- let unreal=0;const ps=Object.entries(S.pos).map(([k,p])=>{const px=(R[k]||{}).px||p.entry,u=(px-p.entry)*(p.side=="LONG"?1:-1)*p.u;unreal+=u;
-  return `${esc(k)} ${p.side} @ ${f(p.entry)} · stop ${f(p.stop)} · P/L ${f2(u)}`});
- document.getElementById("bal").textContent="$"+f2(S.bal+unreal);
- document.getElementById("pos").innerHTML=ps.length?ps.map(x=>"<div>"+x+"</div>").join(""):"None";
- const r=R[sel]||{sig:"WAIT",why:"Scanning markets…",px:0};
+ const p=S&&S.pos[sel];if(p){g.strokeStyle="#ef4444";g.setLineDash([4,4]);g.beginPath();g.moveTo(0,Y(p.stop));g.lineTo(W,Y(p.stop));g.stroke();g.setLineDash([])}}
+function render(){const m=document.getElementById("mode");
+ if(!S){m.textContent="NO SERVER DATA";m.className="pill demo";document.getElementById("why").textContent="Could not load /api/state. The database may not be connected yet.";return}
+ const age=(Date.now()-S.updated)/1000,ok=S.updated&&age<300;
+ m.textContent=ok?"24/7 · LIVE":"STALE";m.className="pill "+(ok?"live":"demo");
+ document.getElementById("upd").textContent=S.updated?`Server last scanned ${Math.round(age)}s ago · ${Object.keys(S.scan).length} markets`+(ok?"":" · timer not running"):"Server has not scanned yet";
+ let unreal=0;const ps=Object.entries(S.pos).map(([k,p])=>{const px=(S.scan[k]||{}).px||p.entry,u=(px-p.entry)*(p.side=="LONG"?1:-1)*p.u;unreal+=u;
+  return `<div>${esc(k)} ${p.side} @ ${f(p.entry)} · stop ${f(p.stop)} · P/L ${f2(u)}</div>`});
+ document.getElementById("bal").textContent="$"+f2(S.bal+unreal);document.getElementById("pos").innerHTML=ps.join("")||"None";
+ const rows=Object.entries(S.scan).sort((a,b)=>rank(a[1].sig)-rank(b[1].sig));
+ if((!sel||!S.scan[sel])&&rows.length){sel=rows[0][0];loadChart()}
+ const r=S.scan[sel]||{sig:"WAIT",why:"Waiting for first scan…",px:0};
  document.getElementById("px").textContent=sel?esc(sel)+"  "+(r.px?f(r.px):"–"):"–";
  const s=document.getElementById("sig");s.textContent=r.sig;s.className="sig "+cls(r.sig);document.getElementById("why").textContent=r.why;
- const rows=M.map(m=>[m,R[m.symbol]]).filter(x=>x[1]).sort((a,b)=>rank(a[1].sig)-rank(b[1].sig));
- document.getElementById("scan").innerHTML="<table>"+rows.map(([m,x])=>`<tr onclick="sel='${esc(m.symbol)}';render()" style="${m.symbol==sel?"background:#171a2b":""}"><td>${esc(m.symbol)}</td><td>${x.px?f(x.px):"–"}</td><td class="${cls(x.sig)}">${esc(x.sig)}</td></tr>`).join("")+"</table>";
- document.getElementById("fills").innerHTML=S.fills.map(x=>`<tr><td>${esc(x.sym)}</td><td>${x.side}</td><td>${f(x.entry)}</td><td>${f(x.exit)} (${x.why})</td><td class="${x.pl>=0?"up":"dn"}">${f2(x.pl)}</td></tr>`).join("")||"<tr><td colspan=5 style='color:var(--mu)'>No trades yet</td></tr>";
+ document.getElementById("scan").innerHTML="<table>"+rows.map(([k,x])=>`<tr onclick="sel='${esc(k)}';render();loadChart()" style="${k==sel?"background:#171a2b":""}"><td>${esc(k)}</td><td>${x.px?f(x.px):"–"}</td><td class="${cls(x.sig)}">${esc(x.sig)}</td></tr>`).join("")+"</table>";
+ document.getElementById("fills").innerHTML=S.fills.map(x=>`<tr><td>${esc(x.sym)}</td><td>${x.side}</td><td>${f(x.entry)}</td><td>${f(x.exit)} (${esc(x.why)})</td><td class="${x.pl>=0?"up":"dn"}">${f2(x.pl)}</td></tr>`).join("")||"<tr><td colspan=5 style='color:var(--mu)'>No trades yet</td></tr>";
  draw()}
-scan();addEventListener("resize",draw);
+loadState();setInterval(loadState,15000);setInterval(loadChart,30000);addEventListener("resize",draw);
 </script></body></html>
-  
+                                                                                
