@@ -40,7 +40,11 @@ function think(S, sym, cs) {
     if (!flat && up && pu && cross && c.c > c.o && body) mk("LONG", Math.min(e89[n], ...sw.map(x => x.l)));
     if (!flat && dn && pd && crossDn && c.c < c.o && body) mk("SHORT", Math.max(e89[n], ...sw.map(x => x.h)));
   }
-  if (S.pos[sym] && !/^(LONG|SHORT)$/.test(o.sig)) o.sig = S.pos[sym].side + " (open)";
+  if (S.pos[sym] && !/^(LONG|SHORT)$/.test(o.sig)) {
+    const q = S.pos[sym], fm = x => (x >= 100 ? x.toFixed(2) : x.toFixed(5));
+    o.sig = q.side + " (open)";
+    o.why = "Holding since " + fm(q.entry) + ", stop " + fm(q.stop) + ". Exits if the 5 and 13 both cross back through the 89.";
+  }
   S.last[sym] = c.t;
   return o;
 }
