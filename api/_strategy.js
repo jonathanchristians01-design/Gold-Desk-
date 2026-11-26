@@ -3,7 +3,12 @@ function ema(v, n) { const k = 2 / (n + 1); let e = v[0]; return v.map((x, i) =>
 function closePos(S, sym, price, why) {
   const p = S.pos[sym], d = p.side == "LONG" ? 1 : -1, pl = (price - p.entry) * d * p.u;
   S.bal += pl;
-  S.fills.unshift({ sym, side: p.side, entry: p.entry, exit: price, pl, why, t: Date.now() });
+  const risk = p.u * Math.abs(p.entry - p.stop);
+  S.fills.unshift({
+    sym, side: p.side, entry: p.entry, exit: price, pl, why, t: Date.now(),
+    sp: Math.abs(p.entry - p.stop) / p.entry * 100,
+    r: risk > 0 ? pl / risk : 0,
+  });
   S.fills = S.fills.slice(0, 100);
   delete S.pos[sym];
 }
