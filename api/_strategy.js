@@ -1,4 +1,4 @@
-const RISK = 0.01, FLAT = 0.0003, MAXPOS = 5;
+const RISK = 0.01, FLAT = 0.0003, MAXPOS = 1000;
 function ema(v, n) { const k = 2 / (n + 1); let e = v[0]; return v.map((x, i) => i ? e = x * k + e * (1 - k) : e); }
 function closePos(S, sym, price, why) {
   const p = S.pos[sym], d = p.side == "LONG" ? 1 : -1, pl = (price - p.entry) * d * p.u;
@@ -7,6 +7,7 @@ function closePos(S, sym, price, why) {
   S.fills.unshift({
     sym, side: p.side, entry: p.entry, exit: price, pl, why, t: Date.now(),
     sp: Math.abs(p.entry - p.stop) / p.entry * 100,
+    pct: (price - p.entry) / p.entry * 100 * d,
     r: risk > 0 ? pl / risk : 0,
   });
   S.fills = S.fills.slice(0, 100);
@@ -40,7 +41,7 @@ function think(S, sym, cs) {
       const d = Math.abs(px - stop); if (!(d > 0)) return;
       let u = S.bal * RISK / d; u = Math.min(u, S.bal * 2 / px);
       S.pos[sym] = { side, entry: px, stop, u, t: c.t, opened: Date.now() };
-      o.sig = side; o.why = "Entry taken on closed candle";
+      o.sig = side; o.why = "Entry signal on closed candle";
     };
     if (!flat && up && pu && cross && c.c > c.o && body) mk("LONG", Math.min(e89[n], ...sw.map(x => x.l)));
     if (!flat && dn && pd && crossDn && c.c < c.o && body) mk("SHORT", Math.max(e89[n], ...sw.map(x => x.h)));
@@ -48,7 +49,7 @@ function think(S, sym, cs) {
   if (S.pos[sym] && !/^(LONG|SHORT)$/.test(o.sig)) {
     const q = S.pos[sym], fm = x => (x >= 100 ? x.toFixed(2) : x.toFixed(5));
     o.sig = q.side + " (open)";
-    o.why = "Holding since " + fm(q.entry) + ", stop " + fm(q.stop) + ". Exits if the 5 and 13 both cross back through the 89.";
+    o.why = "Signal active since " + fm(q.entry) + ", stop " + fm(q.stop) + ". Exit signal if the 5 and 13 both cross back through the 89.";
   }
   S.last[sym] = c.t;
   return o;
