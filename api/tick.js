@@ -7,11 +7,30 @@ async function vget(path) {
   if (!r.ok) throw new Error("vembit " + r.status);
   return r.json();
 }
+const fm = x => (x >= 100 ? x.toFixed(2) : x.toFixed(5));
+async function notify(text) {
+  const topic = (process.env.NTFY_TOPIC || "").trim();
+  if (!topic) return false;
+  try {
+    await fetch("https://ntfy.sh/" + encodeURIComponent(topic), {
+      method: "POST",
+      headers: { Title: "EMA Desk", Tags: "chart_with_upwards_trend" },
+      body: text,
+    });
+    return true;
+  } catch (e) { return false; }
+}
 module.exports = async (req, res) => {
   if (!process.env.CRON_SECRET || req.query.secret !== process.env.CRON_SECRET)
     return res.status(401).json({ error: "unauthorized" });
+  if (req.query.test) {
+    const sent = await notify("Test alert from your EMA Desk. Alerts are working.");
+    return res.json({ ok: true, test: true, topic_set: !!process.env.NTFY_TOPIC, sent });
+  }
   try {
     const S = await load();
+    const prevPos = Object.assign({}, S.pos);
+    const prevT = S.fills.length ? S.fills[0].t || 0 : 0;
     const md = await vget("/markets");
     const ms = (Array.isArray(md) ? md : md.markets || []).filter(x => x.symbol && x.open !== false);
     const names = new Set(ms.map(m => m.symbol)), seen = new Set();
@@ -28,7 +47,14 @@ module.exports = async (req, res) => {
     for (const k of Object.keys(S.scan)) if (!names.has(k)) delete S.scan[k];
     S.updated = Date.now();
     await save(S);
-    res.json({ ok: true, markets: ms.length, scanned: seen.size, open: Object.keys(S.pos).length });
+    const msgs = [];
+    for (const [k, p] of Object.entries(S.pos))
+      if (!prevPos[k] || prevPos[k].t !== p.t)
+        msgs.push(`${p.side} ${k} opened at ${fm(p.entry)}, stop ${fm(p.stop)}`);
+    for (const f of S.fills.filter(x => (x.t || 0) > prevT).reverse())
+      msgs.push(`${f.sym} ${f.side} closed (${f.why}) at ${fm(f.exit)}, P/L ${f.pl >= 0 ? "+" : ""}${f.pl.toFixed(2)}`);
+    if (msgs.length) await notify(msgs.join("\n"));
+    res.json({ ok: true, markets: ms.length, scanned: seen.size, open: Object.keys(S.pos).length, alerts: msgs.length });
   } catch (e) {
     res.status(502).json({ error: String(e).slice(0, 200) });
   }
