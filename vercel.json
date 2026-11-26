@@ -1,1 +1,1 @@
-{"functions":{"api/tick.js":{"maxDuration":60}}}
+{"functions":{"api/tick.js":{"maxDuration":60},"api/backtest.js":{"maxDuration":60}}}
