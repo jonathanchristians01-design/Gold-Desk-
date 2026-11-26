@@ -10,22 +10,23 @@ async function vget(path) {
 const fm = x => (x >= 100 ? x.toFixed(2) : x.toFixed(5));
 async function notify(text) {
   const topic = (process.env.NTFY_TOPIC || "").trim();
-  if (!topic) return false;
+  if (!topic) return 0;
   try {
-    await fetch("https://ntfy.sh/" + encodeURIComponent(topic), {
+    const r = await fetch("https://ntfy.sh/" + encodeURIComponent(topic), {
       method: "POST",
       headers: { Title: "EMA Desk", Tags: "chart_with_upwards_trend" },
       body: text,
     });
-    return true;
-  } catch (e) { return false; }
+    return r.status;
+  } catch (e) { return -1; }
 }
 module.exports = async (req, res) => {
   if (!process.env.CRON_SECRET || req.query.secret !== process.env.CRON_SECRET)
     return res.status(401).json({ error: "unauthorized" });
   if (req.query.test) {
-    const sent = await notify("Test alert from your EMA Desk. Alerts are working.");
-    return res.json({ ok: true, test: true, topic_set: !!process.env.NTFY_TOPIC, sent });
+    const topic = (process.env.NTFY_TOPIC || "").trim();
+    const status = await notify("Test alert from your EMA Desk. Alerts are working.");
+    return res.json({ ok: true, test: true, topic_length: topic.length, topic_starts: topic.slice(0, 12), topic_ends: topic.slice(-4), ntfy_status: status });
   }
   try {
     const S = await load();
