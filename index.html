@@ -1,93 +1,89 @@
-<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>EMA Desk</title>
-<style>
-:root{--bg:#07080f;--card:#10121c;--line:#1f2333;--tx:#e8eaf3;--mu:#7d839b;--g:#22c55e;--r:#ef4444;--y:#facc15;--b:#6d7cff}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:14px system-ui,sans-serif;padding:12px;max-width:760px;margin:auto}
-.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
-h1{font-size:18px;margin:0}.pill{padding:3px 10px;border-radius:99px;font-size:12px;font-weight:700}
-.live{background:#12351f;color:var(--g)}.demo{background:#3a2e08;color:var(--y)}
-.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px;margin-bottom:10px}
-.row{display:flex;gap:10px}.row>*{flex:1}.lbl{color:var(--mu);font-size:11px;text-transform:uppercase;letter-spacing:.05em}
-.big{font-size:22px;font-weight:700}canvas{width:100%;height:260px;display:block}
-.sig{font-size:20px;font-weight:800}.up{color:var(--g)}.dn{color:var(--r)}.wait{color:var(--y)}
-.leg span{margin-right:12px;font-size:12px}table{width:100%;border-collapse:collapse;font-size:12px}
-td,th{padding:5px 3px;text-align:left;border-bottom:1px solid var(--line)}th{color:var(--mu);font-weight:500}
-button{background:var(--b);color:#fff;border:0;border-radius:10px;padding:8px 14px;font-weight:600}
-.warn{font-size:12px;color:var(--y);margin-top:6px}
-.sg{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin:8px 0}.sb{background:#0b0d16;border:1px solid var(--line);border-radius:10px;padding:8px}.sb b{display:block;font-size:16px;margin-top:2px}.sb span{color:var(--mu);font-size:11px;text-transform:uppercase;letter-spacing:.05em}
-</style></head><body>
-<div class="top"><h1>EMA Desk · All markets · 5M</h1><span id="mode" class="pill demo">CONNECTING</span></div>
-<div class="row">
- <div class="card"><div class="lbl">Price</div><div class="big" id="px">–</div></div>
- <div class="card"><div class="lbl">Paper balance</div><div class="big" id="bal">–</div></div>
-</div>
-<div class="card"><div class="lbl">Chart</div><div class="sig wait" id="sig">WAIT</div><div id="why" style="color:var(--mu);margin-top:4px">Scanning markets…</div></div>
-<div class="card"><canvas id="cv"></canvas>
- <div class="leg"><span style="color:#facc15">● EMA 5</span><span style="color:#38bdf8">● EMA 13</span><span style="color:#f472b6">● EMA 89</span></div></div>
-<div class="card"><div class="lbl">Open positions</div><div id="pos">None</div></div><div class="card"><div class="lbl">Scanner (tap a market)</div><div id="scan" style="max-height:260px;overflow:auto"></div><div id="upd" style="color:var(--mu);font-size:12px;margin-top:6px"></div></div>
-<div class="card"><div class="lbl">Closed-trade stats</div><div id="stats"></div><div id="bymkt"></div></div>
-<div class="card"><div class="lbl">Fills</div><table><thead><tr><th>Market</th><th>Side</th><th>Entry</th><th>Exit</th><th>P/L</th></tr></thead><tbody id="fills"></tbody></table>
- <div style="margin-top:8px"><button onclick="resetDesk()">Reset paper account</button></div>
- <div class="warn">Paper money only. This desk never places real orders.</div></div>
-<script>
-let S=null,sel=null,CS=[];
-const esc=t=>String(t).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-const f=n=>n>=100?n.toFixed(2):n.toFixed(5),f2=n=>n.toFixed(2);
-function ema(v,n){const k=2/(n+1);let e=v[0];return v.map((x,i)=>i?e=x*k+e*(1-k):e)}
-function cls(s){return s.startsWith("LONG")?"up":s.startsWith("SHORT")?"dn":"wait"}
-function rank(s){return s=="LONG"||s=="SHORT"?0:s.includes("open")?1:s.includes("TREND")?2:3}
-async function loadState(){try{const r=await fetch("/api/state");if(!r.ok)throw 0;S=await r.json()}catch(e){S=null}render()}
-async function loadChart(){if(!sel)return;const sym=sel;try{const r=await fetch("/api/candles?symbol="+encodeURIComponent(sym)+"&interval=5m&limit=300");const d=await r.json();
- const a=(d.candles||[]).map(x=>({t:+x.t,o:+x.o,h:+x.h,l:+x.l,c:+x.c})).filter(x=>x.c);if(sym==sel){CS=a;draw()}}catch(e){}}
-async function resetDesk(){const k=prompt("Enter your CRON_SECRET to reset the paper account");if(!k)return;
- const r=await fetch("/api/state?reset=1&secret="+encodeURIComponent(k));alert(r.ok?"Reset done":"Wrong secret");loadState()}
-function draw(){const cv=document.getElementById("cv"),dpr=devicePixelRatio||1,W=cv.clientWidth,H=cv.clientHeight;
- cv.width=W*dpr;cv.height=H*dpr;const g=cv.getContext("2d");g.scale(dpr,dpr);if(CS.length<100)return;
- const cl=CS.map(x=>x.c),E=[[ema(cl,5),"#facc15"],[ema(cl,13),"#38bdf8"],[ema(cl,89),"#f472b6"]];
- const N=100,v=CS.slice(-N),off=CS.length-v.length;
- const lo=Math.min(...v.map(x=>x.l)),hi=Math.max(...v.map(x=>x.h)),pad=(hi-lo)*.05,L=lo-pad,Hh=hi+pad;
- const X=i=>(i+.5)*W/N,Y=p=>H-(p-L)/(Hh-L)*H,w=Math.max(1,W/N*.6);
- v.forEach((x,i)=>{g.strokeStyle=g.fillStyle=x.c>=x.o?"#22c55e":"#ef4444";g.beginPath();g.moveTo(X(i),Y(x.h));g.lineTo(X(i),Y(x.l));g.stroke();
-  g.fillRect(X(i)-w/2,Y(Math.max(x.o,x.c)),w,Math.max(1,Math.abs(Y(x.o)-Y(x.c))))});
- E.forEach(([a,col])=>{g.strokeStyle=col;g.lineWidth=1.5;g.beginPath();let first=1;
-  a.forEach((y,i)=>{const j=i-off;if(j<0||j>=v.length)return;first?(g.moveTo(X(j),Y(y)),first=0):g.lineTo(X(j),Y(y))});g.stroke()});g.lineWidth=1;
- const p=S&&S.pos[sel];if(p){g.strokeStyle="#ef4444";g.setLineDash([4,4]);g.beginPath();g.moveTo(0,Y(p.stop));g.lineTo(W,Y(p.stop));g.stroke();g.setLineDash([])}}
-
-function stats(){const F=S.fills||[],el=document.getElementById("stats"),bm=document.getElementById("bymkt");
- if(!F.length){el.innerHTML='<div style="color:var(--mu);margin-top:6px">No closed trades yet. Stats appear after the first one closes.</div>';bm.innerHTML="";return}
- const W=F.filter(x=>x.pl>0),L=F.filter(x=>x.pl<=0),sum=a=>a.reduce((t,x)=>t+x.pl,0);
- const gw=sum(W),gl=Math.abs(sum(L)),tot=sum(F),wr=W.length/F.length*100;
- const aw=W.length?gw/W.length:0,al=L.length?gl/L.length:0,pf=gl>0?(gw/gl).toFixed(2):"n/a";
- const Rs=F.filter(x=>typeof x.r==="number"),aR=Rs.length?Rs.reduce((t,x)=>t+x.r,0)/Rs.length:null;
- const Ss=F.filter(x=>typeof x.sp==="number"),aS=Ss.length?Ss.reduce((t,x)=>t+x.sp,0)/Ss.length:null;
- const box=(l,v,c)=>`<div class="sb"><span>${l}</span><b class="${c||""}">${v}</b></div>`;
- const sg=n=>(n>=0?"+":"")+f2(n);
- el.innerHTML='<div class="sg">'+box("Closed trades",F.length)+box("Win rate",wr.toFixed(0)+"%  ("+W.length+"W / "+L.length+"L)")
-  +box("Realized P/L",sg(tot),tot>=0?"up":"dn")+box("Profit factor",pf)+box("Avg win","+"+f2(aw),"up")+box("Avg loss","-"+f2(al),"dn")
-  +box("Avg result (R)",aR===null?"n/a":(aR>=0?"+":"")+aR.toFixed(2)+"R",aR>0?"up":aR<0?"dn":"")+box("Avg stop distance",aS===null?"n/a":aS.toFixed(2)+"%")+'</div>'
-  +(F.length<30?`<div style="color:var(--y);font-size:12px">Only ${F.length} closed trades so far. That is too few to judge the strategy (aim for 30 or more).</div>`:"")
-  +(F.length>=100?'<div style="color:var(--mu);font-size:12px">Showing the most recent 100 trades.</div>':"");
- const M={};F.forEach(x=>{const m=M[x.sym]||(M[x.sym]={n:0,w:0,pl:0});m.n++;if(x.pl>0)m.w++;m.pl+=x.pl});
- const rows=Object.entries(M).sort((a,b)=>b[1].pl-a[1].pl).slice(0,15);
- bm.innerHTML='<div class="lbl" style="margin-top:8px">By market</div><table><thead><tr><th>Market</th><th>Trades</th><th>Wins</th><th>P/L</th></tr></thead><tbody>'
-  +rows.map(([k,m])=>`<tr><td>${esc(k)}</td><td>${m.n}</td><td>${Math.round(m.w/m.n*100)}%</td><td class="${m.pl>=0?"up":"dn"}">${sg(m.pl)}</td></tr>`).join("")+"</tbody></table>"}
-function render(){const m=document.getElementById("mode");
- if(!S){m.textContent="NO SERVER DATA";m.className="pill demo";document.getElementById("why").textContent="Could not load /api/state. The database may not be connected yet.";return}
- const age=(Date.now()-S.updated)/1000,ok=S.updated&&age<300;
- m.textContent=ok?"24/7 · LIVE":"STALE";m.className="pill "+(ok?"live":"demo");
- document.getElementById("upd").textContent=S.updated?`Server last scanned ${Math.round(age)}s ago · ${Object.keys(S.scan).length} markets`+(ok?"":" · timer not running"):"Server has not scanned yet";
- let unreal=0;const ps=Object.entries(S.pos).map(([k,p])=>{const px=(S.scan[k]||{}).px||p.entry,u=(px-p.entry)*(p.side=="LONG"?1:-1)*p.u;unreal+=u;
-  return `<div>${esc(k)} ${p.side} @ ${f(p.entry)} · stop ${f(p.stop)} · P/L ${f2(u)}</div>`});
- document.getElementById("bal").textContent="$"+f2(S.bal+unreal);document.getElementById("pos").innerHTML=ps.join("")||"None";
- const rows=Object.entries(S.scan).sort((a,b)=>rank(a[1].sig)-rank(b[1].sig));
- if((!sel||!S.scan[sel])&&rows.length){sel=rows[0][0];loadChart()}
- const r=S.scan[sel]||{sig:"WAIT",why:"Waiting for first scan…",px:0};
- document.getElementById("px").textContent=sel?esc(sel)+"  "+(r.px?f(r.px):"–"):"–";
- const s=document.getElementById("sig");s.textContent=r.sig;s.className="sig "+cls(r.sig);document.getElementById("why").textContent=r.why;
- document.getElementById("scan").innerHTML="<table>"+rows.map(([k,x])=>`<tr onclick="sel='${esc(k)}';render();loadChart()" style="${k==sel?"background:#171a2b":""}"><td>${esc(k)}</td><td>${x.px?f(x.px):"–"}</td><td class="${cls(x.sig)}">${esc(x.sig)}</td></tr>`).join("")+"</table>";
- document.getElementById("fills").innerHTML=S.fills.map(x=>`<tr><td>${esc(x.sym)}</td><td>${x.side}</td><td>${f(x.entry)}</td><td>${f(x.exit)} (${esc(x.why)})</td><td class="${x.pl>=0?"up":"dn"}">${f2(x.pl)}</td></tr>`).join("")||"<tr><td colspan=5 style='color:var(--mu)'>No trades yet</td></tr>";
- stats();draw()}
-loadState();setInterval(loadState,15000);setInterval(loadChart,30000);addEventListener("resize",draw);
-</script></body></html>
+const { think } = require("./_strategy");
+const { load, save } = require("./_store");
+async function vget(path) {
+  const r = await fetch("https://vembit.com/api/v1" + path, {
+    headers: { Authorization: "Bearer " + (process.env.VEMBIT_API_KEY || "").trim(), Accept: "application/json" },
+  });
+  if (!r.ok) throw new Error("vembit " + r.status);
+  return r.json();
+}
+const fm = x => (x >= 100 ? x.toFixed(2) : x.toFixed(5));
+async function notify(text) {
+  const out = { ntfy: 0, telegram: 0 };
+  const topic = (process.env.NTFY_TOPIC || "").trim();
+  const tok = (process.env.TELEGRAM_BOT_TOKEN || "").trim();
+  const chat = (process.env.TELEGRAM_CHAT_ID || "").trim();
+  const jobs = [];
+  if (topic)
+    jobs.push(
+      fetch("https://ntfy.sh/" + encodeURIComponent(topic), {
+        method: "POST",
+        headers: { Title: "EMA Desk", Tags: "chart_with_upwards_trend" },
+        body: text,
+      }).then(r => { out.ntfy = r.status; }, () => { out.ntfy = -1; })
+    );
+  if (tok && chat)
+    jobs.push(
+      fetch(`https://api.telegram.org/bot${tok}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chat_id: chat, text }),
+      }).then(r => { out.telegram = r.status; }, () => { out.telegram = -1; })
+    );
+  await Promise.all(jobs);
+  return out;
+}
+module.exports = async (req, res) => {
+  if (!process.env.CRON_SECRET || req.query.secret !== process.env.CRON_SECRET)
+    return res.status(401).json({ error: "unauthorized" });
+  if (req.query.test) {
+    const tok = (process.env.TELEGRAM_BOT_TOKEN || "").trim();
+    const chat = (process.env.TELEGRAM_CHAT_ID || "").trim();
+    const out = { ok: true, test: true, telegram_token_set: !!tok, telegram_chat_set: !!chat };
+    if (tok && !chat) {
+      try {
+        const r = await fetch(`https://api.telegram.org/bot${tok}/getUpdates`);
+        const d = await r.json();
+        const ids = [...new Set((d.result || []).map(u => u.message && u.message.chat && u.message.chat.id).filter(Boolean))];
+        out.chat_ids_found = ids;
+        out.hint = ids.length ? "Put this number in TELEGRAM_CHAT_ID" : "Send any message to your bot in Telegram first, then reload";
+      } catch (e) { out.hint = "Could not reach Telegram"; }
+      return res.json(out);
+    }
+    out.sent = await notify("Test alert from your EMA Desk. Alerts are working.");
+    return res.json(out);
+  }
+  try {
+    const S = await load();
+    const prevPos = Object.assign({}, S.pos);
+    const prevT = S.fills.length ? S.fills[0].t || 0 : 0;
+    const md = await vget("/markets");
+    const ms = (Array.isArray(md) ? md : md.markets || []).filter(x => x.symbol && x.open !== false);
+    const names = new Set(ms.map(m => m.symbol)), seen = new Set();
+    for (let i = 0; i < ms.length; i += 6) {
+      await Promise.all(ms.slice(i, i + 6).map(async m => {
+        try {
+          const d = await vget(`/candles?symbol=${encodeURIComponent(m.symbol)}&interval=5m&limit=300`);
+          const cs = (d.candles || []).map(x => ({ t: +x.t, o: +x.o, h: +x.h, l: +x.l, c: +x.c })).filter(x => x.c);
+          S.scan[m.symbol] = think(S, m.symbol, cs);
+          seen.add(m.symbol);
+        } catch (e) {}
+      }));
+    }
+    for (const k of Object.keys(S.scan)) if (!names.has(k)) delete S.scan[k];
+    S.updated = Date.now();
+    await save(S);
+    const msgs = [];
+    for (const [k, p] of Object.entries(S.pos))
+      if (!prevPos[k] || prevPos[k].t !== p.t)
+        msgs.push(`${p.side} SIGNAL: ${k} at ${fm(p.entry)}, stop ${fm(p.stop)}`);
+    for (const f of S.fills.filter(x => (x.t || 0) > prevT).reverse()) {
+      const pct = typeof f.pct === "number" ? f.pct : ((f.exit - f.entry) / f.entry) * 100 * (f.side === "LONG" ? 1 : -1);
+      msgs.push(`EXIT ${f.sym} ${f.side} (${f.why === "stop" ? "stop hit" : "trend broke"}) at ${fm(f.exit)}, ${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%`);
+    }
+    if (msgs.length) await notify(msgs.join("\n"));
+    res.json({ ok: true, markets: ms.length, scanned: seen.size, open: Object.keys(S.pos).length, alerts: msgs.length });
+  } catch (e) {
+    res.status(502).json({ error: String(e).slice(0, 200) });
+  }
+};
