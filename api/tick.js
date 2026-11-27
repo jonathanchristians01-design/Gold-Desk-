@@ -1,5 +1,6 @@
 const { think } = require("./_strategy");
 const { load, save } = require("./_store");
+const { MAJORS } = require("./_markets");
 async function vget(path) {
   const r = await fetch("https://vembit.com/api/v1" + path, {
     headers: { Authorization: "Bearer " + (process.env.VEMBIT_API_KEY || "").trim(), Accept: "application/json" },
@@ -55,10 +56,13 @@ module.exports = async (req, res) => {
   }
   try {
     const S = await load();
+    // drop anything that is not a major pair (silently, no alerts)
+    for (const k of Object.keys(S.pos)) if (!MAJORS.includes(k)) delete S.pos[k];
+    S.fills = S.fills.filter(f => MAJORS.includes(f.sym));
     const prevPos = Object.assign({}, S.pos);
     const prevT = S.fills.length ? S.fills[0].t || 0 : 0;
     const md = await vget("/markets");
-    const ms = (Array.isArray(md) ? md : md.markets || []).filter(x => x.symbol && x.open !== false);
+    const ms = (Array.isArray(md) ? md : md.markets || []).filter(x => x.symbol && x.open !== false && MAJORS.includes(x.symbol));
     const names = new Set(ms.map(m => m.symbol)), seen = new Set();
     for (let i = 0; i < ms.length; i += 6) {
       await Promise.all(ms.slice(i, i + 6).map(async m => {
@@ -82,7 +86,7 @@ module.exports = async (req, res) => {
       msgs.push(`EXIT ${f.sym} ${f.side} (${f.why === "stop" ? "stop hit" : "trend broke"}) at ${fm(f.exit)}, ${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%`);
     }
     if (msgs.length) await notify(msgs.join("\n"));
-    res.json({ ok: true, markets: ms.length, scanned: seen.size, open: Object.keys(S.pos).length, alerts: msgs.length });
+    res.json({ ok: true, majors_found: ms.map(m => m.symbol), markets: ms.length, scanned: seen.size, open: Object.keys(S.pos).length, alerts: msgs.length });
   } catch (e) {
     res.status(502).json({ error: String(e).slice(0, 200) });
   }
