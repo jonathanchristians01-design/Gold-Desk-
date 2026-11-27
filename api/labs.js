@@ -1,4 +1,5 @@
 // Strategy lab: tests several strategies on several timeframes with the same fair rules.
+const { MAJORS } = require("./_markets");
 const FLAT = 0.0003;
 const ema = (v, n) => { const k = 2 / (n + 1); let e = v[0]; return v.map((x, i) => i ? e = x * k + e * (1 - k) : e); };
 async function vget(path) {
@@ -146,7 +147,8 @@ module.exports = async (req, res) => {
   try {
     const md = await vget("/markets");
     let ms = (Array.isArray(md) ? md : md.markets || []).filter(x => x.symbol && x.open !== false).map(x => x.symbol);
-    if (req.query.symbols) { const w = new Set(String(req.query.symbols).split(",")); ms = ms.filter(s => w.has(s)); }
+    const want = req.query.symbols === "all" ? null : new Set(req.query.symbols ? String(req.query.symbols).split(",") : MAJORS);
+    if (want) ms = ms.filter(s => want.has(s));
     const data = {};
     for (const tf of TFS) {
       data[tf] = {};
@@ -176,6 +178,7 @@ module.exports = async (req, res) => {
     res.send(`<!DOCTYPE html><meta name="viewport" content="width=device-width,initial-scale=1"><title>Strategy lab</title>
 <style>body{background:#07080f;color:#e8eaf3;font:12px system-ui;padding:10px}table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid #222640;padding:6px 3px;text-align:left;vertical-align:top}th{color:#8a90a8;font-weight:500;font-size:10px}.g{color:#22c55e}.r{color:#ef4444}p{color:#8a90a8;line-height:1.5}small{color:#8a90a8}</style>
 <h2>Strategy lab: ${good} of ${rows.length} combinations held up</h2>
+<p>Markets tested: ${Object.keys(data["5m"]).join(", ") || "none found"}.</p>
 <p>Cost assumed: ${cost}% per signal (round trip). Entries at the next candle's open. Each row covers every market that had enough history.</p>
 <div style="overflow-x:auto"><table><tr><th>Strategy</th><th>Candles</th><th>Signals</th><th>Win rate</th><th>Profit factor</th><th>Total (net)</th><th>Avg result</th><th>PF older / newer</th><th>Verdict</th></tr>${tr}</table></div>
 <p><b>Holds up</b> means: at least 30 signals, profit factor above 1 in BOTH the older and the newer half, and a positive total after costs. Anything else is not trustworthy. Even a "Holds up" must be watched in the live desk before you rely on it.</p>
