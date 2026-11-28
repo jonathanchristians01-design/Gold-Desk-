@@ -98,11 +98,11 @@ const STRATS = [
     },
     exit: (j, pos, cs, I) => pos.side === "LONG" ? cs[j].c >= I.sma[j] : cs[j].c <= I.sma[j] },
 ];
-function run(cs, S, I, cost) {
+function run(cs, S, I) {
   const trades = []; let pos = null;
   const done = (price) => {
-    const d = pos.side === "LONG" ? 1 : -1, g = (price - pos.entry) / pos.entry * 100 * d, net = g - cost;
-    trades.push({ t: pos.t, pct: net, r: net / pos.sp }); pos = null;
+    const d = pos.side === "LONG" ? 1 : -1;
+    trades.push({ t: pos.t, g: (price - pos.entry) / pos.entry * 100 * d, sp: pos.sp }); pos = null;
   };
   for (let j = 200; j < cs.length; j++) {
     const c = cs[j];
@@ -132,15 +132,15 @@ function run(cs, S, I, cost) {
   }
   return trades;
 }
-function stats(tr) {
-  const W = tr.filter(x => x.pct > 0), L = tr.filter(x => x.pct <= 0);
-  const gw = W.reduce((s, x) => s + x.pct, 0), gl = Math.abs(L.reduce((s, x) => s + x.pct, 0));
-  return { n: tr.length, win: tr.length ? W.length / tr.length * 100 : 0, pf: gl > 0 ? gw / gl : (gw > 0 ? 99 : 0),
-    total: gw - gl, r: tr.length ? tr.reduce((s, x) => s + x.r, 0) / tr.length : 0 };
+function stats(tr, cost) {
+  let gw = 0, gl = 0, w = 0;
+  for (const x of tr) { const n = x.g - cost; if (n > 0) { gw += n; w++; } else gl += -n; }
+  return { n: tr.length, win: tr.length ? w / tr.length * 100 : 0, pf: gl > 0 ? gw / gl : (gw > 0 ? 99 : 0), total: gw - gl };
 }
 const TFS = ["5m", "15m", "1h"];
 module.exports = async (req, res) => {
-  if (!process.env.CRON_SECRET || req.query.secret !== process.env.CRON_SECRET)
+  const want = (process.env.CRON_SECRET || "").trim();
+  if (!want || String(req.query.secret || "").trim() !== want)
     return res.status(401).json({ error: "unauthorized" });
   const t0 = Date.now(), pages = Math.max(1, Math.min(3, +req.query.pages || 2));
   const cost = req.query.cost !== undefined ? Math.max(0, +req.query.cost || 0) : 0.05;
@@ -157,31 +157,42 @@ module.exports = async (req, res) => {
     }
     const rows = [];
     for (const S of STRATS) for (const tf of TFS) {
-      const syms = Object.keys(data[tf]); const all = [];
+      const syms = Object.keys(data[tf]), all = [];
       let tmin = Infinity, tmax = -Infinity;
       for (const s of syms) {
         const cs = data[tf][s], I = indicators(cs);
         tmin = Math.min(tmin, cs[200].t); tmax = Math.max(tmax, cs[cs.length - 1].t);
-        run(cs, S, I, cost).forEach(t => all.push(t));
+        run(cs, S, I).forEach(t => { t.m = s; all.push(t); });
       }
-      const mid = (tmin + tmax) / 2, st = stats(all), a = stats(all.filter(t => t.t < mid)), b = stats(all.filter(t => t.t >= mid));
-      rows.push({ name: S.name, tf, days: (tmax - tmin) / 864e5, markets: syms.length, all: st, a, b,
-        ok: st.n >= 30 && a.pf > 1 && b.pf > 1 && st.total > 0 });
+      const mid = (tmin + tmax) / 2;
+      const st = stats(all, cost), a = stats(all.filter(t => t.t < mid), cost), b = stats(all.filter(t => t.t >= mid), cost);
+      const byM = {}; all.forEach(t => (byM[t.m] = byM[t.m] || []).push(t));
+      const mk = Object.entries(byM).map(([m, tr]) => Object.assign({ m }, stats(tr, cost))).sort((x, y) => y.total - x.total);
+      const top = mk.length ? mk[0].m : null;
+      const exTop = stats(all.filter(t => t.m !== top), cost).total;
+      const s10 = stats(all, 0.10), s15 = stats(all, 0.15);
+      const ok = st.n >= 30 && a.pf > 1 && b.pf > 1 && st.total > 0;
+      const robust = ok && s10.pf > 1 && exTop > 0;
+      rows.push({ name: S.name, tf, days: (tmax - tmin) / 864e5, st, a, b, s10, s15, exTop, top, mk, ok, robust });
     }
     if (req.query.json) return res.json({ cost, rows });
-    const f = (x, d = 1) => x.toFixed(d);
-    const tr = rows.map(r => `<tr><td>${r.name}</td><td>${r.tf}<br><small>${f(r.days, 0)}d</small></td><td>${r.all.n}</td><td><b>${f(r.all.win, 0)}%</b></td><td>${f(r.all.pf, 2)}</td>
-      <td class="${r.all.total >= 0 ? "g" : "r"}">${r.all.total >= 0 ? "+" : ""}${f(r.all.total, 1)}%</td><td>${f(r.all.r, 2)}R</td><td>${f(r.a.pf, 2)} / ${f(r.b.pf, 2)}</td>
-      <td class="${r.ok ? "g" : "r"}"><b>${r.ok ? "Holds up" : "No"}</b></td></tr>`).join("");
-    const good = rows.filter(r => r.ok).length;
+    const f = (x, d = 1) => x.toFixed(d), sg = x => (x >= 0 ? "+" : "") + f(x, 1) + "%";
+    const pfc = x => `<span class="${x > 1 ? "g" : "r"}">${f(x, 2)}</span>`;
+    const tr = rows.map(r => `<tr><td>${r.name}</td><td>${r.tf}<br><small>${f(r.days, 0)}d</small></td><td>${r.st.n}</td><td>${f(r.st.win, 0)}%</td>
+      <td>${pfc(r.st.pf)}</td><td>${pfc(r.s10.pf)}</td><td>${pfc(r.s15.pf)}</td><td class="${r.exTop >= 0 ? "g" : "r"}">${sg(r.exTop)}</td>
+      <td class="${r.robust ? "g" : r.ok ? "y" : "r"}"><b>${r.robust ? "Robust" : r.ok ? "Fragile" : "No"}</b></td></tr>`).join("");
+    const det = rows.filter(r => r.ok).map(r => `<h3>${r.name}, ${r.tf} (${r.robust ? "Robust" : "Fragile"})</h3>
+      <table><tr><th>Market</th><th>Signals</th><th>Win rate</th><th>Total net</th></tr>${r.mk.map(m => `<tr><td>${m.m}</td><td>${m.n}</td><td>${f(m.win, 0)}%</td><td class="${m.total >= 0 ? "g" : "r"}">${sg(m.total)}</td></tr>`).join("")}</table>`).join("") || "<p>No combination passed the basic test, so there is nothing to break down.</p>";
+    const nr = rows.filter(r => r.robust).length, nf = rows.filter(r => r.ok && !r.robust).length;
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.send(`<!DOCTYPE html><meta name="viewport" content="width=device-width,initial-scale=1"><title>Strategy lab</title>
-<style>body{background:#07080f;color:#e8eaf3;font:12px system-ui;padding:10px}table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid #222640;padding:6px 3px;text-align:left;vertical-align:top}th{color:#8a90a8;font-weight:500;font-size:10px}.g{color:#22c55e}.r{color:#ef4444}p{color:#8a90a8;line-height:1.5}small{color:#8a90a8}</style>
-<h2>Strategy lab: ${good} of ${rows.length} combinations held up</h2>
+<style>body{background:#07080f;color:#e8eaf3;font:12px system-ui;padding:10px}table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid #222640;padding:6px 3px;text-align:left;vertical-align:top}th{color:#8a90a8;font-weight:500;font-size:10px}.g{color:#22c55e}.r{color:#ef4444}.y{color:#facc15}p{color:#8a90a8;line-height:1.5}small{color:#8a90a8}h3{font-size:13px;margin:14px 0 4px}</style>
+<h2>Strategy lab: ${nr} robust, ${nf} fragile, of ${rows.length}</h2>
 <p>Markets tested: ${Object.keys(data["5m"]).join(", ") || "none found"}.</p>
-<p>Cost assumed: ${cost}% per signal (round trip). Entries at the next candle's open. Each row covers every market that had enough history.</p>
-<div style="overflow-x:auto"><table><tr><th>Strategy</th><th>Candles</th><th>Signals</th><th>Win rate</th><th>Profit factor</th><th>Total (net)</th><th>Avg result</th><th>PF older / newer</th><th>Verdict</th></tr>${tr}</table></div>
-<p><b>Holds up</b> means: at least 30 signals, profit factor above 1 in BOTH the older and the newer half, and a positive total after costs. Anything else is not trustworthy. Even a "Holds up" must be watched in the live desk before you rely on it.</p>
-<p>Took ${f((Date.now() - t0) / 1000, 1)}s. Change the cost with &amp;cost=0.1, or history length with &amp;pages=3.</p>`);
+<p>Base cost: ${cost}% per signal (round trip). The PF columns re-test the same trades at three costs: ${cost}%, 0.10% and 0.15%. "Without best market" is the total result after removing the single best market.</p>
+<div style="overflow-x:auto"><table><tr><th>Strategy</th><th>Candles</th><th>Signals</th><th>Win rate</th><th>PF @${cost}%</th><th>PF @0.10%</th><th>PF @0.15%</th><th>Without best market</th><th>Verdict</th></tr>${tr}</table></div>
+<p><b>Robust</b> = at least 30 signals, profit factor above 1 in both the older and newer half, still above 1 at a 0.10% cost, and still positive without its best market. <b>Fragile</b> = passed the first test but failed one of the stress tests. PF = profit factor, winnings divided by losses.</p>
+<h2>Per-market results</h2>${det}
+<p>Took ${f((Date.now() - t0) / 1000, 1)}s. Change the base cost with &amp;cost=0.1, or history length with &amp;pages=3.</p>`);
   } catch (e) { res.status(502).json({ error: String(e).slice(0, 200) }); }
 };
