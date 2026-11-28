@@ -35,8 +35,11 @@ async function notify(text) {
   return out;
 }
 module.exports = async (req, res) => {
-  if (!process.env.CRON_SECRET || req.query.secret !== process.env.CRON_SECRET)
-    return res.status(401).json({ error: "unauthorized" });
+  const want = (process.env.CRON_SECRET || "").trim();
+  const got = String(req.query.secret || "").trim();
+  if (!want || got !== want)
+    // temporary diagnostics: remove saved_length/typed_length once the password works
+    return res.status(401).json({ error: "unauthorized", secret_set: !!want, saved_length: want.length, typed_length: got.length });
   if (req.query.test) {
     const tok = (process.env.TELEGRAM_BOT_TOKEN || "").trim();
     const chat = (process.env.TELEGRAM_CHAT_ID || "").trim();
